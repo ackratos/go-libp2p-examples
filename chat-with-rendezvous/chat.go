@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/libp2p/go-libp2p"
+	relay "github.com/libp2p/go-libp2p-circuit"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
@@ -102,6 +103,7 @@ func main() {
 	// here.
 	host, err := libp2p.New(ctx,
 		libp2p.ListenAddrs([]multiaddr.Multiaddr(config.ListenAddresses)...),
+		libp2p.EnableRelay(relay.OptDiscovery),
 	)
 	if err != nil {
 		panic(err)
@@ -161,14 +163,24 @@ func main() {
 		panic(err)
 	}
 
-	for peer := range peerChan {
-		if peer.ID == host.ID() {
+	for p := range peerChan {
+		if p.ID == host.ID() {
 			continue
 		}
-		logger.Debug("Found peer:", peer)
+		logger.Info("Found peer:", p)
 
-		logger.Debug("Connecting to:", peer)
-		stream, err := host.NewStream(ctx, peer.ID, protocol.ID(config.ProtocolID))
+		relayaddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + p.ID.Pretty())
+		relayInfo := peer.AddrInfo{
+			ID:    p.ID,
+			Addrs: []multiaddr.Multiaddr{relayaddr},
+		}
+		err = host.Connect(ctx, relayInfo)
+		if err != nil {
+			logger.Warning("Relay Connection failed:", err)
+		}
+
+		logger.Debug("Connecting to:", p)
+		stream, err := host.NewStream(ctx, p.ID, protocol.ID(config.ProtocolID))
 
 		if err != nil {
 			logger.Warning("Connection failed:", err)
@@ -180,7 +192,7 @@ func main() {
 			go readData(rw)
 		}
 
-		logger.Info("Connected to:", peer)
+		logger.Info("Connected to:", p)
 	}
 
 	select {}
